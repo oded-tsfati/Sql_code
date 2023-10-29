@@ -1,0 +1,302 @@
+	/*************
+		--A-- 
+	*************/
+
+SELECT *
+	FROM (
+		-- >	open tbl: counting number of platforms per game
+			SELECT Name AS Game_Name
+			,COUNT(Platform) AS No_Of_Platforms
+			FROM video_games
+			GROUP BY Name
+			 )tbl
+WHERE No_Of_Platforms >= 3
+GROUP BY Game_Name
+,No_Of_Platforms
+ORDER BY No_Of_Platforms DESC
+
+	/*************
+		--B-- 
+	*************/
+
+SELECT tbl4.Genre
+,tbl4.Release_Year AS [Release Year]
+,tbl4.No_Of_Games AS [No Of Games]
+,tbl4.Max_Peaks_Per_Year AS [Max Peaks Per Year]
+
+FROM
+(
+		-- >	open tbl4: ranking higher peaks
+SELECT *
+,MAX(tbl3.Max_Peaks_Per_Year)OVER () AS Highest_Year_Of_Genres 
+
+		FROM ( -- >	open tbl3: counting Max Peaks Per Year
+		SELECT
+		tbl2.Genre
+		,tbl2.Release_Year
+		,tbl2.No_Of_Games
+		,COUNT(*)OVER (PARTITION BY Release_Year) AS Max_Peaks_Per_Year		
+				FROM (
+						-- >	open tbl2: ranking no of games per year DESC
+				SELECT *
+				,ROW_NUMBER()OVER (PARTITION BY Genre ORDER BY No_Of_Games DESC) AS Row_Genre_No
+								FROM (
+										-- >	open tbl: counting release genre per year
+										SELECT DISTINCT Genre AS Genre
+										,Year_of_Release AS Release_Year
+										,COUNT(Genre)AS No_Of_Games
+										FROM video_games
+										WHERE Genre IS NOT NULL AND Year_of_Release IS NOT NULL
+										GROUP BY Genre,Year_of_Release
+									)tbl
+						)tbl2
+		WHERE Row_Genre_No = 1
+		)tbl3
+		)tbl4
+WHERE tbl4.Max_Peaks_Per_Year = tbl4.Highest_Year_Of_Genres 
+
+	/*****************************
+	--EX 3-- 
+	*****************************/
+/***********************
+MOST REPEATED VALUE - MODE
+***********************/
+WITH Mode_cte
+AS
+(
+-->filtering most common/repeated values
+SELECT *
+FROM
+		(
+		-->tbl3 - row number according to repeat values desc
+		SELECT *
+		,ROW_NUMBER() OVER (PARTITION BY Rating_View ORDER BY Repeat_Value DESC ) AS NO_Row
+		FROM
+					(
+				-->tbl2 - counting repeat values
+					SELECT *
+					,COUNT(CriticScore) AS Repeat_Value
+					FROM	-->tbl - filter null
+							(
+							SELECT Rating AS Rating_View
+							,Critic_Score AS CriticScore
+							FROM video_games
+							WHERE Rating IS NOT NULL AND Critic_Score IS NOT NULL
+							)tbl
+					GROUP BY Rating_View,CriticScore
+					)tbl2
+			)tbl3
+WHERE NO_Row = 1
+)
+/***********************
+Weighted Average
+***********************/
+,Weighted_Average_cte
+AS
+(
+					-->tbl3 - Calculate the weighted average
+					SELECT Rating
+					,ALL_Critic_Count/SUM_Critic_Count AS Weighted_Average
+					FROM
+					(
+						-->tbl2 - sum & all critic count 
+						SELECT
+						Rating
+						,SUM(Critic_Count) AS SUM_Critic_Count
+						,SUM(Critic_Count_Per_Rate) AS ALL_Critic_Count
+						FROM
+								-->tbl - SUM critic count per rating & filter null
+								(
+								SELECT Rating
+								,Critic_Count
+								,Critic_Score*Critic_Count AS Critic_Count_Per_Rate
+								FROM video_games
+								WHERE Rating IS NOT NULL AND Critic_Score IS NOT NULL
+								)tbl
+							GROUP BY Rating
+						)tbl2
+)
+
+/***********************
+normal Average - AVERAGE
+***********************/
+,Normal_Average_cte
+AS
+(	-->calculate average
+SELECT tbl2.Rating
+,SUM_Critic_Score/Count_Per_Rating AS Normal_Average
+FROM
+(		-->tbl2 - sum critic score,deleting nulls and inner join
+		SELECT vg.Rating
+		,Count_Per_Rating
+		,SUM(vg.Critic_Score) AS SUM_Critic_Score
+				FROM video_games vg	
+				INNER JOIN
+						(	-->tbl - Count Per Rating & deleting nulls
+							SELECT Rating
+							,COUNT(Rating) AS Count_Per_Rating
+							FROM video_games
+							WHERE Rating IS NOT NULL AND Critic_Score IS NOT NULL
+							GROUP BY Rating
+						)tbl
+					ON tbl.Rating=vg.Rating
+					WHERE vg.Rating IS NOT NULL AND vg.Critic_Score IS NOT NULL
+					GROUP BY vg.Rating,tbl.Count_Per_Rating
+		)tbl2
+)
+
+
+/***********************
+MAIN
+***********************/
+
+
+SELECT mc.Rating_View AS [Rating View]
+,CAST(wac.Weighted_Average AS decimal (5,1)) AS [Weighted Average]
+,CAST(ROUND(nac.Normal_Average,1) AS decimal (5,1)) AS [Normal Average]
+,CAST(mc.CriticScore AS decimal (5,1)) AS [Mode Of Critic Score]
+FROM Mode_cte mc
+INNER JOIN Normal_Average_cte nac
+ON mc.Rating_View = nac.Rating
+INNER JOIN Weighted_Average_cte wac
+ON wac.Rating = nac.Rating
+
+	/*****************************
+	--EX 4--
+	*****************************/
+	/************************************************
+ ***** DISTINCT Genre TABLE CTE
+************************************************/
+WITH Distinct_Genre_cte
+AS
+(
+SELECT DISTINCT Genre
+FROM video_games
+WHERE Genre IS NOT NULL
+)
+/************************************************
+ ***** DISTINCT Platform TABLE CTE
+************************************************/
+
+,Distinct_Platform_cte
+AS
+(
+SELECT DISTINCT Platform
+FROM video_games
+WHERE Platform IS NOT NULL
+)
+/************************************************
+ ***** DISTINCT YEARS TABLE CTE
+************************************************/
+,Distinct_Years_cte
+AS
+(https://github.com/oded-tsfati/Sql_code/tree/main
+SELECT DISTINCT Year_of_Release
+FROM video_games
+WHERE Year_of_Release IS NOT NULL
+)
+/************************************************
+ ***** CROSS JOIN Genre,Platform,Years TABLE CTE
+************************************************/
+
+,Data_Scaffolding__cte
+AS
+(
+SELECT *
+FROM Distinct_Genre_cte,Distinct_Platform_cte,Distinct_Years_cte
+)
+/************************************************
+ ***** MAIN
+************************************************/
+
+
+SELECT Genre AS [Game Genre]
+,Platform AS Platforma
+,Year_of_Release AS [Release Year]
+
+-->IIF - replacing null to zero
+
+,IIF(Sum_Global_Sales IS NOT NULL,ROUND(Sum_Global_Sales,2),0) AS [Sum Global Sales]
+FROM
+	-->tbl - adding global sales values into the cross join table
+		(
+		SELECT dsc.Genre,dsc.Platform,dsc.Year_of_Release
+		,SUM(vg.Global_Sales) AS Sum_Global_Sales
+		FROM Data_Scaffolding__cte dsc
+		LEFT JOIN video_games vg
+		ON ((dsc.Genre = vg.Genre)AND(dsc.Platform = vg.Platform)AND(dsc.Year_of_Release = vg.Year_of_Release))
+		GROUP BY dsc.Genre,dsc.Platform,dsc.Year_of_Release
+		)tbl
+
+ORDER BY 1,2,3
+
+	/*****************************
+	--EX 5--
+	*****************************/
+
+	--DISTINCT Platform
+
+WITH Distinct_platform_Table_sce
+AS
+(
+SELECT DISTINCT Platform
+FROM video_games
+)
+
+--DISTINCT Year
+
+,Distinct_Year_Table_sce
+AS
+(
+SELECT DISTINCT Year_of_Release
+FROM video_games
+WHERE (Year_of_Release IS NOT NULL) AND (Year_of_Release <> 2020)
+)
+--cross join between 2 tables containing single column
+,New_Table_sce
+AS
+(
+SELECT *
+FROM Distinct_platform_Table_sce,Distinct_Year_Table_sce
+)
+
+/***********************************
+--MAIN-- 
+**********************************/
+		--delete YOY = 0
+SELECT 
+tbl4.Platform
+,tbl4.Year_of_Release
+,tbl4.Yearly_Global_Sales
+,tbl4.[YOY %]
+FROM
+(			--tbl4 - calc YOY
+SELECT *
+,IIF(tbl3.Next_Row IS NOT NULL,ROUND(((tbl3.Yearly_Global_Sales-tbl3.Pre_Yearly_Global_Sales)/tbl3.Pre_Yearly_Global_Sales)*100,2),0) AS [YOY %]
+FROM
+(		--tbl3 - adding 2 columns,Next_Row to check if NULL & previous year global sales to calc YOY
+		SELECT *
+		,LEAD(tbl2.No_Row)OVER (PARTITION BY tbl2.Platform ORDER BY tbl2.Year_of_Release) AS Next_Row
+		,LAG(tbl2.Yearly_Global_Sales)OVER (PARTITION BY tbl2.Platform ORDER BY tbl2.Year_of_Release) AS Pre_Yearly_Global_Sales
+		FROM
+		(		--tbl2 - numbering the rows per each platform
+				SELECT *
+				,ROW_NUMBER()OVER (PARTITION BY tbl.Platform ORDER BY tbl.Year_of_Release) AS No_Row
+				FROM
+				(		
+					--tbl - adding sum global sales 
+						SELECT DISTINCT nts.Platform,nts.Year_of_Release
+						,ROUND(SUM(vg.Global_Sales),2) AS Yearly_Global_Sales
+						FROM New_Table_sce nts
+						LEFT JOIN video_games vg
+						ON ((nts.Platform = vg.Platform) AND (nts.Year_of_Release = vg.Year_of_Release))
+						
+						GROUP BY nts.Platform,nts.Year_of_Release
+						)tbl
+				WHERE Yearly_Global_Sales IS NOT NULL
+				)tbl2
+		)tbl3
+WHERE tbl3.No_Row > 1
+)tbl4
+WHERE tbl4.[YOY %] <> 0
+ORDER BY 4 DESC
